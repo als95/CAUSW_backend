@@ -39,8 +39,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import javax.validation.Validator;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -109,20 +111,25 @@ public class CircleService {
 
         return this.circlePort.findAll()
                 .stream()
-                .map(
-                        circleDomainModel -> {
-                            if (joinedCircleMap.containsKey(circleDomainModel.getId())) {
+                .map(circleDomainModel -> {
+                            if (userDomainModel.getRole().equals(Role.ADMIN)) {
                                 return CirclesResponseDto.from(
                                         circleDomainModel,
                                         this.circleMemberPort.getNumMember(circleDomainModel.getId()),
-                                        joinedCircleMap.get(circleDomainModel.getId()).getUpdatedAt()
-                                );
-                            } else {
-                                return CirclesResponseDto.from(
-                                        circleDomainModel,
-                                        this.circleMemberPort.getNumMember(circleDomainModel.getId())
+                                        LocalDateTime.now()
                                 );
                             }
+
+                            return Optional.ofNullable(joinedCircleMap.get(circleDomainModel.getId()))
+                                    .map(circleMemberDomainModel -> CirclesResponseDto.from(
+                                            circleDomainModel,
+                                            this.circleMemberPort.getNumMember(circleDomainModel.getId()),
+                                            circleMemberDomainModel.getUpdatedAt()
+                                    ))
+                                    .orElse(CirclesResponseDto.from(
+                                            circleDomainModel,
+                                            this.circleMemberPort.getNumMember(circleDomainModel.getId())
+                                    ));
                         }
                 )
                 .collect(Collectors.toList());
@@ -133,8 +140,6 @@ public class CircleService {
             String currentUserId,
             String circleId
     ) {
-        ValidatorBucket validatorBucket = ValidatorBucket.of();
-
         CircleDomainModel circleDomainModel = this.circlePort.findById(circleId).orElseThrow(
                 () -> new BadRequestException(
                         ErrorCode.ROW_DOES_NOT_EXIST,
@@ -149,7 +154,7 @@ public class CircleService {
                 )
         );
 
-        validatorBucket
+        ValidatorBucket.of()
                 .consistOf(UserStateValidator.of(userDomainModel.getState()))
                 .consistOf(UserRoleIsNoneValidator.of(userDomainModel.getRole()))
                 .consistOf(TargetIsDeletedValidator.of(circleDomainModel.getIsDeleted(), StaticValue.DOMAIN_CIRCLE))
@@ -163,15 +168,13 @@ public class CircleService {
                     )
             );
 
-            validatorBucket
+            ValidatorBucket.of()
                     .consistOf(CircleMemberStatusValidator.of(
                             circleMember.getStatus(),
                             List.of(CircleMemberStatus.MEMBER)
-                    ));
+                    ))
+                    .validate();
         }
-
-        validatorBucket
-                .validate();
 
         return CircleBoardsResponseDto.from(
                 CircleResponseDto.from(
@@ -321,7 +324,7 @@ public class CircleService {
                 "자유 게시판",
                 newCircle.getName() + " 자유 게시판",
                 Stream.of(Role.ADMIN, Role.PRESIDENT, Role.COUNCIL, Role.LEADER_1, Role.LEADER_2, Role.LEADER_3, Role.LEADER_4,
-                        Role.LEADER_CIRCLE, Role.LEADER_ALUMNI, Role.COMMON, Role.PROFESSOR)
+                                Role.LEADER_CIRCLE, Role.LEADER_ALUMNI, Role.COMMON, Role.PROFESSOR)
                         .map(Role::getValue)
                         .collect(Collectors.toList()),
                 "자유 게시판",
@@ -485,8 +488,6 @@ public class CircleService {
 
     @Transactional
     public CircleMemberResponseDto userApply(String userId, String circleId) {
-        ValidatorBucket validatorBucket = ValidatorBucket.of();
-
         CircleDomainModel circle = this.circlePort.findById(circleId).orElseThrow(
                 () -> new BadRequestException(
                         ErrorCode.ROW_DOES_NOT_EXIST,
@@ -501,37 +502,33 @@ public class CircleService {
                 )
         );
 
-        validatorBucket
+        ValidatorBucket.of()
                 .consistOf(UserStateValidator.of(user.getState()))
                 .consistOf(UserRoleIsNoneValidator.of(user.getRole()))
                 .consistOf(TargetIsDeletedValidator.of(circle.getIsDeleted(), StaticValue.DOMAIN_CIRCLE))
-                .consistOf(StudentIdIsNullValidator.of(user.getStudentId()));
+                .consistOf(StudentIdIsNullValidator.of(user.getStudentId()))
+                .validate();
 
-        return CircleMemberResponseDto.from(user, this.circleMemberPort.findByUserIdAndCircleId(user.getId(), circle.getId()).map(
-                circleMember -> {
-                    validatorBucket
-                            .consistOf(
-                                    CircleMemberStatusValidator.of(
+        return CircleMemberResponseDto.from(
+                user,
+                this.circleMemberPort.findByUserIdAndCircleId(user.getId(), circle.getId())
+                        .map(circleMember -> {
+                            ValidatorBucket.of()
+                                    .consistOf(CircleMemberStatusValidator.of(
                                             circleMember.getStatus(),
                                             List.of(CircleMemberStatus.LEAVE, CircleMemberStatus.REJECT)
-                                    )
-                            )
-                            .validate();
+                                    ))
+                                    .validate();
 
-                    return this.circleMemberPort.updateStatus(circleMember.getId(), CircleMemberStatus.AWAIT).orElseThrow(
-                            () -> new InternalServerException(
-                                    ErrorCode.INTERNAL_SERVER,
-                                    "Application id checked, but exception occurred"
-                            )
-                    );
-                }
-        ).orElseGet(
-                () -> {
-                    validatorBucket
-                            .validate();
-                    return this.circleMemberPort.create(user, circle);
-                }
-        ));
+                            return this.circleMemberPort.updateStatus(circleMember.getId(), CircleMemberStatus.AWAIT).orElseThrow(
+                                    () -> new InternalServerException(
+                                            ErrorCode.INTERNAL_SERVER,
+                                            "Application id checked, but exception occurred"
+                                    )
+                            );
+                        })
+                        .orElseGet(() -> this.circleMemberPort.create(user, circle))
+        );
     }
 
     @Transactional(readOnly = true)

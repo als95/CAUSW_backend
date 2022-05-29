@@ -130,6 +130,7 @@ public class LockerService {
                 .map(resLockerDomainModel -> {
                     this.lockerLogPort.create(
                             resLockerDomainModel.getLockerNumber(),
+                            lockerLocationDomainModel.getName(),
                             creatorDomainModel,
                             LockerLogAction.ENABLE,
                             "사물함 최초 생성"
@@ -179,6 +180,7 @@ public class LockerService {
                 .map(resLockerDomainModel -> {
                     this.lockerLogPort.create(
                             resLockerDomainModel.getLockerNumber(),
+                            resLockerDomainModel.getLockerLocation().getName(),
                             updaterDomainModel,
                             LockerLogAction.of(lockerUpdateRequestDto.getAction()),
                             lockerUpdateRequestDto.getMessage().orElse(lockerUpdateRequestDto.getAction())
@@ -263,6 +265,7 @@ public class LockerService {
 
         this.lockerLogPort.create(
                 lockerDomainModel.getLockerNumber(),
+                lockerDomainModel.getLockerLocation().getName(),
                 deleterDomainModel,
                 LockerLogAction.DISABLE,
                 "사물함 삭제"
@@ -305,20 +308,26 @@ public class LockerService {
                 )
         );
 
+        LockerResponseDto myLocker = null;
+        if (!userDomainModel.getRole().equals(Role.ADMIN))
+            myLocker = this.lockerPort.findByUserId(userId)
+                    .map(lockerDomainModel -> LockerResponseDto.from(
+                            lockerDomainModel,
+                            userDomainModel,
+                            lockerDomainModel.getLockerLocation().getName()
+                    ))
+                    .orElse(null);
+
         return LockerLocationsResponseDto.of(
                 this.lockerLocationPort.findAll()
                         .stream()
-                        .map(
-                                (lockerLocationDomainModel) -> LockerLocationResponseDto.from(
-                                        lockerLocationDomainModel,
-                                        this.lockerPort.getEnableLockerCountByLocation(lockerLocationDomainModel.getId()),
-                                        this.lockerPort.getLockerCountByLocation(lockerLocationDomainModel.getId())
-                                )
-                        )
+                        .map(lockerLocationDomainModel -> LockerLocationResponseDto.from(
+                                lockerLocationDomainModel,
+                                this.lockerPort.countEnableLockerByLocation(lockerLocationDomainModel.getId()),
+                                this.lockerPort.countByLocation(lockerLocationDomainModel.getId())
+                        ))
                         .collect(Collectors.toList()),
-                this.lockerPort.findByUserId(userId)
-                        .map(lockerDomainModel -> LockerResponseDto.from(lockerDomainModel, userDomainModel))
-                        .orElse(null)
+                myLocker
         );
     }
 
@@ -406,8 +415,8 @@ public class LockerService {
                                 "Locker location id checked, but exception occurred"
                         )
                 ),
-                this.lockerPort.getEnableLockerCountByLocation(lockerLocationDomainModel.getId()),
-                this.lockerPort.getLockerCountByLocation(lockerLocationDomainModel.getId())
+                this.lockerPort.countEnableLockerByLocation(lockerLocationDomainModel.getId()),
+                this.lockerPort.countByLocation(lockerLocationDomainModel.getId())
         );
     }
 
@@ -427,7 +436,7 @@ public class LockerService {
                 )
         );
 
-        if (this.lockerPort.getLockerCountByLocation(lockerLocationDomainModel.getId()) != 0L) {
+        if (this.lockerPort.countByLocation(lockerLocationDomainModel.getId()) != 0L) {
             throw new BadRequestException(
                     ErrorCode.CANNOT_PERFORMED,
                     "사물함 위치에 사물함이 존재합니다."
